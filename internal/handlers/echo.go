@@ -1,4 +1,4 @@
-package echo
+package handlers
 
 import (
 	"encoding/json"

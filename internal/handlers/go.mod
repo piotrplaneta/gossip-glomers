@@ -1,4 +1,4 @@
-module echo
+module handlers
 
 go 1.20
 

@@ -14,6 +14,10 @@ func main() {
 		return handlers.EchoHandler(msg, n)
 	})
 
+	n.Handle("generate", func(msg maelstrom.Message) error {
+		return handlers.GenerateHandler(msg, n)
+	})
+
 	if err := n.Run(); err != nil {
 		log.Fatal(err)
 	}

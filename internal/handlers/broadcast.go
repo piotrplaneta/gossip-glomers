@@ -50,9 +50,10 @@ func propagateBroadcasts(n *maelstrom.Node) {
 	seenMessages.mutex.Unlock()
 
 	time.Sleep(time.Second)
+	go propagateBroadcasts(n)
 }
 
-func PropagateMessageHandler(msg maelstrom.Message, n *maelstrom.Node) error {
+func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	var body map[string]any
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
@@ -67,7 +68,7 @@ func PropagateMessageHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	}
 	messages.mutex.Unlock()
 
-	return n.Reply(msg, map[string]string{"type": "propagate_message_ok"})
+	return n.Reply(msg, map[string]string{"type": "propagate_broadcast_ok"})
 }
 
 func BroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {

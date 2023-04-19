@@ -30,6 +30,10 @@ func main() {
 		return handlers.TopologyHandler(msg, n)
 	})
 
+	n.Handle("propagate_broadcast", func(msg maelstrom.Message) error {
+		return handlers.PropagateBroadcastHandler(msg, n)
+	})
+
 	if err := n.Run(); err != nil {
 		log.Fatal(err)
 	}

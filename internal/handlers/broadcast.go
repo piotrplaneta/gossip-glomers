@@ -28,6 +28,8 @@ func propagateBroadcasts(n *maelstrom.Node) {
 	seenMessages.mutex.Lock()
 
 	for nodeId, lastSeenForNode := range seenMessages.v {
+
+		messages.mutex.Lock()
 		messagesToSend := make([]int, len(messages.v))
 
 		for message := range messages.v {
@@ -35,6 +37,7 @@ func propagateBroadcasts(n *maelstrom.Node) {
 				messagesToSend = append(messagesToSend, message)
 			}
 		}
+		messages.mutex.Unlock()
 
 		for _, message := range messagesToSend {
 			n.RPC(string(nodeId), map[string]any{"type": "propagate_broadcast", "message": message}, func(msg maelstrom.Message) error {
@@ -97,9 +100,11 @@ func ReadHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 
 	messagesToSend := make([]int, len(messages.v))
 
+	messages.mutex.Lock()
 	for message := range messages.v {
 		messagesToSend = append(messagesToSend, message)
 	}
+	messages.mutex.Unlock()
 
 	return n.Reply(msg, map[string]any{"type": "read_ok", "messages": messagesToSend})
 }

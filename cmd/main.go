@@ -18,6 +18,18 @@ func main() {
 		return handlers.GenerateHandler(msg, n)
 	})
 
+	n.Handle("broadcast", func(msg maelstrom.Message) error {
+		return handlers.BroadcastHandler(msg, n)
+	})
+
+	n.Handle("read", func(msg maelstrom.Message) error {
+		return handlers.ReadHandler(msg, n)
+	})
+
+	n.Handle("topology", func(msg maelstrom.Message) error {
+		return handlers.TopologyHandler(msg, n)
+	})
+
 	if err := n.Run(); err != nil {
 		log.Fatal(err)
 	}

@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
-	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -22,15 +22,15 @@ type SafeLastSeenMessages struct {
 	v     map[NodeId]map[int]bool
 }
 
-var seenMessages = SafeLastSeenMessages{v: make(map[NodeId]map[int]bool)}
+var ackedMessages = SafeLastSeenMessages{v: make(map[NodeId]map[int]bool)}
 
 func propagateBroadcasts(n *maelstrom.Node) {
-	seenMessages.mutex.Lock()
+	ackedMessages.mutex.Lock()
 
-	for nodeId, lastSeenForNode := range seenMessages.v {
+	for nodeId, lastSeenForNode := range ackedMessages.v {
 
 		messages.mutex.Lock()
-		messagesToSend := make([]int, len(messages.v))
+		messagesToSend := make([]int, 0)
 
 		for message := range messages.v {
 			if !lastSeenForNode[message] {
@@ -41,19 +41,22 @@ func propagateBroadcasts(n *maelstrom.Node) {
 
 		for _, message := range messagesToSend {
 			n.RPC(string(nodeId), map[string]any{"type": "propagate_broadcast", "message": message}, func(msg maelstrom.Message) error {
-				seenMessages.mutex.Lock()
-				seenMessages.v[nodeId][message] = true
-				seenMessages.mutex.Unlock()
+				var body map[string]any
+				if err := json.Unmarshal(msg.Body, &body); err != nil {
+					return err
+				}
+
+				ackedMessage := int(body["acked_message"].(float64))
+				ackedMessages.mutex.Lock()
+				ackedMessages.v[NodeId(msg.Src)][ackedMessage] = true
+				ackedMessages.mutex.Unlock()
 
 				return nil
 			})
 		}
 
 	}
-	seenMessages.mutex.Unlock()
-
-	time.Sleep(time.Second)
-	go propagateBroadcasts(n)
+	ackedMessages.mutex.Unlock()
 }
 
 func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
@@ -65,13 +68,17 @@ func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	message := int(body["message"].(float64))
 
 	messages.mutex.Lock()
+	ackedMessages.mutex.Lock()
 	if !messages.v[message] {
 		messages.v[message] = true
-
 	}
+	ackedMessages.v[NodeId(msg.Src)][message] = true
+	ackedMessages.mutex.Unlock()
 	messages.mutex.Unlock()
 
-	return n.Reply(msg, map[string]string{"type": "propagate_broadcast_ok"})
+	propagateBroadcasts(n)
+
+	return n.Reply(msg, map[string]any{"type": "propagate_broadcast_ok", "acked_message": message})
 }
 
 func BroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
@@ -109,19 +116,28 @@ func ReadHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	return n.Reply(msg, map[string]any{"type": "read_ok", "messages": messagesToSend})
 }
 
+type TopologyType struct {
+	Topology map[string][]string `json:"topology"`
+}
+
 func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node) error {
-	var body map[string]any
+	var body TopologyType
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
 	}
 
-	seenMessages.mutex.Lock()
-	for _, nodeId := range n.NodeIDs() {
+	topology := body.Topology
+	neighbours := topology[n.ID()]
+
+	ackedMessages.mutex.Lock()
+	for _, nodeId := range neighbours {
 		if nodeId != n.ID() {
-			seenMessages.v[NodeId(nodeId)] = make(map[int]bool)
+			ackedMessages.v[NodeId(nodeId)] = make(map[int]bool)
 		}
 	}
-	seenMessages.mutex.Unlock()
+
+	log.Println(ackedMessages.v)
+	ackedMessages.mutex.Unlock()
 
 	go propagateBroadcasts(n)
 

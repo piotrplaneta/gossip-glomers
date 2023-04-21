@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
-	"log"
 	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
@@ -17,12 +17,12 @@ type SafeMessages struct {
 
 var messages = SafeMessages{v: make(map[int]bool)}
 
-type SafeLastSeenMessages struct {
+type SafeAckedMessages struct {
 	mutex sync.Mutex
 	v     map[NodeId]map[int]bool
 }
 
-var ackedMessages = SafeLastSeenMessages{v: make(map[NodeId]map[int]bool)}
+var ackedMessages = SafeAckedMessages{v: make(map[NodeId]map[int]bool)}
 
 func propagateBroadcasts(n *maelstrom.Node) {
 	ackedMessages.mutex.Lock()
@@ -57,6 +57,8 @@ func propagateBroadcasts(n *maelstrom.Node) {
 
 	}
 	ackedMessages.mutex.Unlock()
+	time.Sleep(time.Millisecond * 400)
+	go propagateBroadcasts(n)
 }
 
 func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
@@ -75,8 +77,6 @@ func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	ackedMessages.v[NodeId(msg.Src)][message] = true
 	ackedMessages.mutex.Unlock()
 	messages.mutex.Unlock()
-
-	propagateBroadcasts(n)
 
 	return n.Reply(msg, map[string]any{"type": "propagate_broadcast_ok", "acked_message": message})
 }
@@ -136,7 +136,6 @@ func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 		}
 	}
 
-	log.Println(ackedMessages.v)
 	ackedMessages.mutex.Unlock()
 
 	go propagateBroadcasts(n)

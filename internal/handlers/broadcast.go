@@ -18,28 +18,32 @@ type SafeMessages struct {
 var messages = SafeMessages{v: make(map[int]bool)}
 
 type SafeAckedMessages struct {
-	mutex sync.Mutex
-	v     map[NodeId]map[int]bool
+	mutex                         sync.Mutex
+	v                             map[NodeId]map[int]bool
+	lastPropagateBroadcastAttempt map[NodeId]map[int]time.Time
 }
 
-var ackedMessages = SafeAckedMessages{v: make(map[NodeId]map[int]bool)}
+var ackedMessages = SafeAckedMessages{v: make(map[NodeId]map[int]bool), lastPropagateBroadcastAttempt: make(map[NodeId]map[int]time.Time)}
+var propagateBroadcastsTicker = time.NewTicker(1000 * time.Millisecond)
+var propagateBroadcastsChannel = make(chan time.Time)
 
 func propagateBroadcasts(n *maelstrom.Node) {
 	ackedMessages.mutex.Lock()
 
-	for nodeId, lastSeenForNode := range ackedMessages.v {
+	for nodeId, ackedByNode := range ackedMessages.v {
 
 		messages.mutex.Lock()
 		messagesToSend := make([]int, 0)
 
 		for message := range messages.v {
-			if !lastSeenForNode[message] {
+			if !ackedByNode[message] && time.Since(ackedMessages.lastPropagateBroadcastAttempt[nodeId][message]) > time.Second {
 				messagesToSend = append(messagesToSend, message)
 			}
 		}
 		messages.mutex.Unlock()
 
 		for _, message := range messagesToSend {
+			ackedMessages.lastPropagateBroadcastAttempt[nodeId][message] = time.Now()
 			n.RPC(string(nodeId), map[string]any{"type": "propagate_broadcast", "message": message}, func(msg maelstrom.Message) error {
 				var body map[string]any
 				if err := json.Unmarshal(msg.Body, &body); err != nil {
@@ -57,8 +61,6 @@ func propagateBroadcasts(n *maelstrom.Node) {
 
 	}
 	ackedMessages.mutex.Unlock()
-	time.Sleep(time.Millisecond * 400)
-	go propagateBroadcasts(n)
 }
 
 func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
@@ -69,14 +71,16 @@ func PropagateBroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 
 	message := int(body["message"].(float64))
 
-	messages.mutex.Lock()
 	ackedMessages.mutex.Lock()
+	messages.mutex.Lock()
 	if !messages.v[message] {
 		messages.v[message] = true
 	}
+	messages.mutex.Unlock()
 	ackedMessages.v[NodeId(msg.Src)][message] = true
 	ackedMessages.mutex.Unlock()
-	messages.mutex.Unlock()
+
+	propagateBroadcastsChannel <- time.Now()
 
 	return n.Reply(msg, map[string]any{"type": "propagate_broadcast_ok", "acked_message": message})
 }
@@ -95,6 +99,8 @@ func BroadcastHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 
 	}
 	messages.mutex.Unlock()
+
+	propagateBroadcastsChannel <- time.Now()
 
 	return n.Reply(msg, map[string]string{"type": "broadcast_ok"})
 }
@@ -133,12 +139,30 @@ func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 	for _, nodeId := range neighbours {
 		if nodeId != n.ID() {
 			ackedMessages.v[NodeId(nodeId)] = make(map[int]bool)
+			ackedMessages.lastPropagateBroadcastAttempt[NodeId(nodeId)] = make(map[int]time.Time)
 		}
 	}
 
 	ackedMessages.mutex.Unlock()
 
-	go propagateBroadcasts(n)
+	go tickBroadcasts(n)
+	go startTickerAndOnDemandBroadcastsPropagation(n)
 
 	return n.Reply(msg, map[string]string{"type": "topology_ok"})
+}
+
+func tickBroadcasts(n *maelstrom.Node) {
+	go func() {
+		for range propagateBroadcastsTicker.C {
+			propagateBroadcastsChannel <- time.Now()
+		}
+	}()
+}
+
+func startTickerAndOnDemandBroadcastsPropagation(n *maelstrom.Node) {
+	go func() {
+		for range propagateBroadcastsChannel {
+			propagateBroadcasts(n)
+		}
+	}()
 }

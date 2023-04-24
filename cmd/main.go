@@ -9,6 +9,7 @@ import (
 
 func main() {
 	n := maelstrom.NewNode()
+	finishingChannel := make(chan string)
 
 	n.Handle("echo", func(msg maelstrom.Message) error {
 		return handlers.EchoHandler(msg, n)
@@ -27,7 +28,7 @@ func main() {
 	})
 
 	n.Handle("topology", func(msg maelstrom.Message) error {
-		return handlers.TopologyHandler(msg, n)
+		return handlers.TopologyHandler(msg, n, finishingChannel)
 	})
 
 	n.Handle("propagate_broadcast", func(msg maelstrom.Message) error {
@@ -37,4 +38,6 @@ func main() {
 	if err := n.Run(); err != nil {
 		log.Fatal(err)
 	}
+
+	finishingChannel <- "finish"
 }

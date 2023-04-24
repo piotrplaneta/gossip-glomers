@@ -23,7 +23,11 @@ type SafeAckedMessages struct {
 	lastPropagateBroadcastAttempt map[NodeId]map[int]time.Time
 }
 
-var ackedMessages = SafeAckedMessages{v: make(map[NodeId]map[int]bool), lastPropagateBroadcastAttempt: make(map[NodeId]map[int]time.Time)}
+var ackedMessages = SafeAckedMessages{
+	v:                             make(map[NodeId]map[int]bool),
+	lastPropagateBroadcastAttempt: make(map[NodeId]map[int]time.Time),
+}
+
 var propagateBroadcastsTicker = time.NewTicker(1000 * time.Millisecond)
 var propagateBroadcastsChannel = make(chan time.Time)
 
@@ -31,7 +35,6 @@ func propagateBroadcasts(n *maelstrom.Node) {
 	ackedMessages.mutex.Lock()
 
 	for nodeId, ackedByNode := range ackedMessages.v {
-
 		messages.mutex.Lock()
 		messagesToSend := make([]int, 0)
 
@@ -126,7 +129,7 @@ type TopologyType struct {
 	Topology map[string][]string `json:"topology"`
 }
 
-func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node) error {
+func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node, finishingChannel chan string) error {
 	var body TopologyType
 	if err := json.Unmarshal(msg.Body, &body); err != nil {
 		return err
@@ -145,24 +148,34 @@ func TopologyHandler(msg maelstrom.Message, n *maelstrom.Node) error {
 
 	ackedMessages.mutex.Unlock()
 
-	go tickBroadcasts(n)
-	go startTickerAndOnDemandBroadcastsPropagation(n)
+	go tickBroadcasts(n, finishingChannel)
+	go startTickerAndOnDemandBroadcastsPropagation(n, finishingChannel)
 
 	return n.Reply(msg, map[string]string{"type": "topology_ok"})
 }
 
-func tickBroadcasts(n *maelstrom.Node) {
+func tickBroadcasts(n *maelstrom.Node, finishingChannel chan string) {
 	go func() {
-		for range propagateBroadcastsTicker.C {
-			propagateBroadcastsChannel <- time.Now()
+		for {
+			select {
+			case <-propagateBroadcastsTicker.C:
+				propagateBroadcastsChannel <- time.Now()
+			case <-finishingChannel:
+				return
+			}
 		}
 	}()
 }
 
-func startTickerAndOnDemandBroadcastsPropagation(n *maelstrom.Node) {
+func startTickerAndOnDemandBroadcastsPropagation(n *maelstrom.Node, finishingChannel chan string) {
 	go func() {
-		for range propagateBroadcastsChannel {
-			propagateBroadcasts(n)
+		for {
+			select {
+			case <-propagateBroadcastsChannel:
+				propagateBroadcasts(n)
+			case <-finishingChannel:
+				return
+			}
 		}
 	}()
 }
